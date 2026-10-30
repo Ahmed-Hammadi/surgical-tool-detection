@@ -1,0 +1,7 @@
+# Phone export (src/export.py), on top of requirements.txt
+onnx
+onnxruntime
+onnxslim
+litert-torch>=0.10.0
+ai-edge-litert>=2.3.0
+# Core ML needs torch<=2.7: install in a separate env, see README "Mobile deployment"

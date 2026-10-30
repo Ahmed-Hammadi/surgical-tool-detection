@@ -1,0 +1,34 @@
+# Canonical class list (order = YOLO class id).
+# Matches the 9 classes of the Mendeley "SURGICAL TOOLS" / SID-RAS dataset.
+names:
+  - forceps
+  - hemostat
+  - scalpel
+  - mayo_scissors
+  - syringe
+  - bandage_scissors
+  - episiotomy_scissors
+  - surgical_gloves
+  - medical_cotton
+
+# Raw label spellings -> canonical name. Matching is case-insensitive and
+# ignores spaces, hyphens and underscores, so "Mayo Scissors" == "mayo_scissors".
+# Add entries here if the downloaded annotations use other spellings.
+aliases:
+  forcep: forceps
+  tissueforceps: forceps
+  hemostats: hemostat
+  haemostat: hemostat
+  haemostats: hemostat
+  artery_forceps: hemostat
+  scalpels: scalpel
+  blade: scalpel
+  mayoscissor: mayo_scissors
+  syringes: syringe
+  bandagescissor: bandage_scissors
+  episiotomyscissor: episiotomy_scissors
+  gloves: surgical_gloves
+  glove: surgical_gloves
+  surgicalglove: surgical_gloves
+  cotton: medical_cotton
+  medicalcottonroll: medical_cotton
