@@ -10,13 +10,24 @@ Data in Brief 2025 (SID-RAS). It has about 6,000 images in 9 classes, and 1,520 
 several tools, some overlapping. Related work: *Surgical Instrument Detection Algorithm Based
 on Improved YOLOv7x*, Sensors 2023, 23(11):5037 (OSI26 dataset, 26 classes).
 
-| id | class | id | class |
-|---|---|---|---|
-| 0 | forceps | 5 | bandage_scissors |
-| 1 | hemostat | 6 | episiotomy_scissors |
-| 2 | scalpel | 7 | surgical_gloves |
-| 3 | mayo_scissors | 8 | medical_cotton |
-| 4 | syringe | | |
+## Instruments
+
+`configs/classes.yaml` defines **43 instrument classes** in three department sets. The model
+is trained on every class that has enough labelled photos, and `prepare_dataset.py` reports
+the rest as missing, so the list can run ahead of the data.
+
+| Set | Classes |
+|---|---|
+| Basic (data available: Mendeley) | forceps, hemostat, scalpel, mayo_scissors, syringe, bandage_scissors, episiotomy_scissors, surgical_gloves, medical_cotton |
+| Soft-tissue | metzenbaum_scissors, iris_scissors, adson_forceps, debakey_forceps, mosquito_forceps, allis_forceps, babcock_forceps, kocher_forceps, needle_holder, towel_clamp, sponge_forceps, suction_tip, probe, skin_hook |
+| Retractors | senn, army_navy, langenbeck, deaver, weitlaner, hohmann |
+| Orthopaedic | bone_mallet, osteotome, bone_curette, periosteal_elevator, bone_rongeur, bone_cutter, bone_holding_forceps, bone_rasp, bone_hook, gigli_saw, depth_gauge, screwdriver, wire_cutter, pliers |
+
+Each class is tagged with the departments that use it (general 21, orthopaedic 33,
+paediatric 21 classes). Only the basic set has training data today.
+**[docs/adding_instruments.md](docs/adding_instruments.md)** is the plan for the rest: public
+datasets to check, how to photograph and label your own instruments, and how to handle
+look-alike classes.
 
 ## Setup
 
@@ -30,23 +41,30 @@ Training needs a GPU to finish in reasonable time. A CPU works for the smoke tes
 
 ## 1. Get the data
 
-Download the dataset zip from the Mendeley page and extract it anywhere under `data/raw/`.
-The folder layout doesn't matter: `prepare_dataset.py` searches it recursively and detects the
-annotation format on its own.
+Download the dataset zip from the Mendeley page and extract it into its own folder under
+`data/raw/`, for example `data/raw/mendeley/`. Every further dataset gets its own folder next
+to it, and all of them are merged. The layout inside a folder doesn't matter:
+`prepare_dataset.py` searches it recursively and detects the annotation format on its own.
 
 - **YOLO**: `.txt` labels next to the images or in a parallel `labels/` folder, with class names in `data.yaml`, `classes.txt` or `obj.names`. Polygon labels are converted to boxes.
 - **Pascal VOC**: `.xml` files.
 - **COCO**: a `.json` file with `images`, `annotations` and `categories`.
 
-If the label spellings differ from the canonical names (for example `Haemostat` or `Mayo Scissor`),
-add them under `aliases` in `configs/classes.yaml`. Unknown labels stop the script with a list of
-what it found. Pass `--drop-unknown` to skip them instead.
+If a label spelling isn't known (for example `Haemostat` or `Mayo Scissor` already are), the
+script stops and lists it. Add it in `configs/classes.yaml` as an alias of a class, under
+`ignore` (not an instrument), or under `exclude_images_with` (an instrument with no class).
 
 ## 2. Prepare a leakage-safe split
 
 ```bash
-python src/prepare_dataset.py --raw data/raw --out data/yolo
+python src/prepare_dataset.py
 ```
+
+It prints how many classes it will train and writes `data/yolo/coverage_report.md`: every
+class of the taxonomy with its box count, and how many classes of each department are covered.
+A class needs at least `--min-instances` boxes (default 40) to be trained. Images showing a
+class below that are left out, so the model is never taught that an instrument is background.
+`--granularity coarse` trains instrument families (7 classes) instead of types.
 
 The dataset was enlarged with blurred, relit and "blood"-stained copies of the same photos. A
 random per-image split would put copies of one photo into both train and test, and that is one
@@ -127,7 +145,10 @@ how precisely the boxes fit.
 python src/predict.py --weights best.pt --source tray.jpg
 python src/predict.py --weights best.pt --source folder/ --save-json counts.json
 python src/predict.py --weights best.pt --source 0      # webcam
+python src/predict.py --weights best.pt --source tray.jpg --department ortho
 ```
+
+`--department` limits the result to that department's instrument set.
 
 ## 6. Mobile deployment
 
@@ -183,7 +204,7 @@ pytest -q                      # data pipeline unit tests
 bash scripts/smoke_test.sh     # synthetic data -> prepare -> train -> evaluate -> predict
 ```
 
-`src/make_synthetic.py` draws simple outlines of the 9 classes on tray-like backgrounds and
+`src/make_synthetic.py` draws simple outlines of the 9 basic-set classes on tray-like backgrounds and
 saves them as VOC, YOLO or COCO. It exists only to show the pipeline runs end to end. Scores
 from synthetic data say nothing about real-data accuracy.
 

@@ -1,8 +1,10 @@
-"""Convert a raw annotated dataset into a leakage-safe YOLO dataset.
+"""Merge one or more raw annotated datasets into a leakage-safe YOLO dataset.
 
 Steps
-1. Read annotations in YOLO txt, Pascal VOC xml or COCO json (auto-detected).
-2. Map label strings onto the canonical classes in configs/classes.yaml.
+1. Read annotations in YOLO txt, Pascal VOC xml or COCO json (auto-detected per source).
+2. Map label strings onto the taxonomy in configs/classes.yaml, and keep only the classes
+   that have enough labelled examples to train (--min-instances). A coverage report lists
+   every class of the taxonomy with its counts, so you can see what still needs data.
 3. Group near-duplicate images (augmented copies of one photo) using
    Roboflow-style filename stems plus a rotation/flip-invariant layout fingerprint
    that tolerates blur, lighting changes and local edits (blood stains, glare).
@@ -12,7 +14,9 @@ Steps
    overlap-only evaluation split.
 
 Usage:
-    python src/prepare_dataset.py --raw data/raw --out data/yolo
+    python src/prepare_dataset.py                               # every dataset folder under data/raw
+    python src/prepare_dataset.py --raw data/raw/mendeley data/raw/ortho_tray
+    python src/prepare_dataset.py --granularity coarse          # instrument families instead of types
 """
 from __future__ import annotations
 
@@ -35,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import IMG_EXTS, ClassMap, dup_descriptor, has_overlap, open_upright, aligned_distance  # noqa: E402
 
 SPLITS = ("train", "val", "test")
+LAYOUT_DIRS = {"images", "labels", "annotations", "train", "valid", "val", "test"}  # parts of ONE dataset
 DUP_THRESH = 0.011  # copies score <~0.007, distinct photos >~0.019 (see README)
 
 
@@ -44,6 +49,7 @@ class Record:
     boxes: list = field(default_factory=list)  # (raw_label, x1, y1, x2, y2) in pixels
     width: int = 0
     height: int = 0
+    source: str = ""
 
 
 # --------------------------------------------------------------------- readers
@@ -262,38 +268,116 @@ def split_groups(group_ids, class_vecs, fracs, seed):
 
 
 # ---------------------------------------------------------------------- writer
+def write_coverage(path: Path, coverage, cmap: ClassMap, a):
+    """Per-class data coverage of the whole taxonomy, and per department."""
+    L = ["# Data coverage\n",
+         f"Granularity: {a.granularity}. A class is trained once it has at least {a.min_instances} labelled boxes; "
+         "aim for 300+ boxes from 150+ different photos per class before trusting its accuracy.\n",
+         "| Class | Boxes | Images | Sources | Status |", "|---|---|---|---|---|"]
+    for c in coverage:
+        L.append(f"| {c['class']} | {c['instances']} | {c['images']} | {', '.join(c['sources'])} | {c['status']} |")
+    if a.granularity == "fine":
+        trained = {c["class"] for c in coverage if c["status"] == "trained"}
+        L += ["\n## By department\n", "| Department | Classes trained | Still missing |", "|---|---|---|"]
+        for d in sorted({d for v in cmap.depts.values() for d in v}):
+            want = cmap.department(d)
+            missing = [c for c in want if c not in trained]
+            L.append(f"| {d} | {len(want) - len(missing)} of {len(want)} | {', '.join(missing)} |")
+    path.write_text("\n".join(L) + "\n")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--raw", type=Path, default=Path("data/raw"))
+    ap.add_argument("--raw", type=Path, nargs="+", default=[Path("data/raw")],
+                    help="one folder per source dataset; a folder holding only sub-folders is expanded to them")
     ap.add_argument("--out", type=Path, default=Path("data/yolo"))
     ap.add_argument("--classes", type=Path, default=Path(__file__).resolve().parent.parent / "configs/classes.yaml")
     ap.add_argument("--format", choices=["auto", "coco", "voc", "yolo"], default="auto")
+    ap.add_argument("--granularity", choices=["fine", "coarse"], default="fine",
+                    help="fine: one class per instrument type; coarse: one class per family (group in classes.yaml)")
+    ap.add_argument("--min-instances", type=int, default=40,
+                    help="classes with fewer labelled boxes are not trained; images showing them are left out")
     ap.add_argument("--split", type=float, nargs=3, default=(0.7, 0.15, 0.15), metavar=("TRAIN", "VAL", "TEST"))
     ap.add_argument("--dup-thresh", type=float, default=DUP_THRESH,
                     help="max fingerprint distance to treat two images as copies of one photo (negative disables)")
     ap.add_argument("--overlap-thresh", type=float, default=0.1, help="intersection/min-area to call two tools overlapping")
-    ap.add_argument("--drop-unknown", action="store_true", help="drop boxes whose label is not in classes.yaml")
+    ap.add_argument("--unknown", choices=["error", "drop-image", "drop-box"], default="error",
+                    help="labels not in classes.yaml: stop (default), leave those images out, or drop only the box")
     ap.add_argument("--keep-empty", action="store_true", help="keep images with no boxes as background negatives")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args(argv)
 
     cmap = ClassMap(a.classes)
-    fmt, recs = load_records(a.raw, a.format)
-    print(f"[read] {len(recs)} annotated images ({fmt})")
+    sources = []
+    for d in a.raw:
+        if not d.is_dir():
+            raise SystemExit(f"{d} not found - extract the dataset(s) there first")
+        subs = sorted(p for p in d.iterdir() if p.is_dir())
+        one_dataset = any(p.is_file() for p in d.iterdir()) or {p.name.lower() for p in subs} & LAYOUT_DIRS
+        sources += [d] if one_dataset or not subs else subs
+    recs = []
+    for d in sources:
+        fmt, got = load_records(d, a.format)
+        for r in got:
+            r.source = d.name
+        print(f"[read] {d.name}: {len(got)} annotated images ({fmt})")
+        recs += got
 
-    unknown = Counter(b[0] for r in recs for b in r.boxes if cmap.canonical(b[0]) is None)
-    if unknown and not a.drop_unknown:
-        raise SystemExit(f"Unknown labels {dict(unknown)}. Add aliases in {a.classes} or pass --drop-unknown.")
+    # ---- labels -> taxonomy
+    unknown = Counter((r.source, b[0]) for r in recs for b in r.boxes if cmap.canonical(b[0]) is None)
+    if unknown and a.unknown == "error":
+        lines = "\n".join(f"  {src}: {lbl!r} x{n}" for (src, lbl), n in sorted(unknown.items()))
+        raise SystemExit(f"Labels not in {a.classes}:\n{lines}\nAdd each as an alias of a class, under "
+                         f"`ignore` (not an instrument) or `exclude_images_with`, or pass --unknown drop-image.")
+    kept, n_excluded = [], 0
     for r in recs:
-        r.boxes = [(cmap.canonical(b[0]), *b[1:]) for b in r.boxes if cmap.canonical(b[0])]
+        mapped = [(cmap.canonical(b[0]), *b[1:]) for b in r.boxes]
+        if any(m[0] == cmap.EXCLUDE or (m[0] is None and a.unknown == "drop-image") for m in mapped):
+            n_excluded += 1
+            continue
+        r.boxes = [m for m in mapped if m[0] not in (None, cmap.IGNORE)]
+        kept.append(r)
+    recs = kept
+    if n_excluded:
+        print(f"[map] left out {n_excluded} images showing instruments that have no class")
+    if a.granularity == "coarse":
+        for r in recs:
+            r.boxes = [(cmap.group[b[0]], *b[1:]) for b in r.boxes]
+        taxonomy = list(dict.fromkeys(cmap.group[n] for n in cmap.names))
+    else:
+        taxonomy = cmap.names
+
+    # ---- keep classes with enough data; images showing an untrained class are left out
+    all_counts = Counter(b[0] for r in recs for b in r.boxes)
+    all_images = Counter(c for r in recs for c in {b[0] for b in r.boxes})
+    all_sources = defaultdict(set)
+    for r in recs:
+        for b in r.boxes:
+            all_sources[b[0]].add(r.source)
+    while True:
+        counts = Counter(b[0] for r in recs for b in r.boxes)
+        weak = {c for c in counts if counts[c] < a.min_instances}
+        if not weak:
+            break
+        recs = [r for r in recs if not weak & {b[0] for b in r.boxes}]
+    names = [c for c in taxonomy if counts.get(c, 0) > 0]
+    if not names:
+        raise SystemExit(f"No class reaches --min-instances {a.min_instances}. Counts: {dict(all_counts)}")
+    index = {c: i for i, c in enumerate(names)}
     if not a.keep_empty:
         recs = [r for r in recs if r.boxes]
+    coverage = [{"class": c, "instances": all_counts.get(c, 0), "images": all_images.get(c, 0),
+                 "sources": sorted(all_sources.get(c, [])),
+                 "status": "trained" if c in index else "too few" if all_counts.get(c) else "no data"}
+                for c in taxonomy]
+    print(f"[classes] training {len(names)} of {len(taxonomy)} classes "
+          f"({sum(c['status'] == 'too few' for c in coverage)} have too few examples, "
+          f"{sum(c['status'] == 'no data' for c in coverage)} have none)")
 
-    nc = len(cmap.names)
-    vecs = np.zeros((len(recs), nc))
+    vecs = np.zeros((len(recs), len(names)))
     for i, r in enumerate(recs):
         for b in r.boxes:
-            vecs[i, cmap.index(b[0])] += 1
+            vecs[i, index[b[0]]] += 1
 
     fp = compute_fingerprints(recs)
     gids, pairs = group_records(recs, fp if a.dup_thresh >= 0 else None, a.dup_thresh)
@@ -337,7 +421,7 @@ def main(argv=None):
             if x2 - x1 < 2 or y2 - y1 < 2:
                 continue
             xyxy.append((x1, y1, x2, y2))
-            lines.append(f"{cmap.index(c)} {(x1 + x2) / 2 / W:.6f} {(y1 + y2) / 2 / H:.6f} {(x2 - x1) / W:.6f} {(y2 - y1) / H:.6f}")
+            lines.append(f"{index[c]} {(x1 + x2) / 2 / W:.6f} {(y1 + y2) / 2 / H:.6f} {(x2 - x1) / W:.6f} {(y2 - y1) / H:.6f}")
             stats[s]["instances"][c] += 1
         lbl = out / "labels" / s / (name + ".txt")
         lbl.parent.mkdir(parents=True, exist_ok=True)
@@ -349,8 +433,7 @@ def main(argv=None):
 
     for k, v in lists.items():
         (out / f"{k}.txt").write_text("\n".join(sorted(v)) + "\n")
-    names = dict(enumerate(cmap.names))
-    base = {"path": str(out), "train": "images/train", "val": "images/val", "names": names}
+    base = {"path": str(out), "train": "images/train", "val": "images/val", "names": dict(enumerate(names))}
     (out / "data.yaml").write_text(yaml.safe_dump({**base, "test": "images/test"}, sort_keys=False))
     for tag in ("overlap", "single"):
         if lists.get(f"test_{tag}"):
@@ -378,7 +461,9 @@ def main(argv=None):
             seen.add(key)
             f.write(f"{d:.4f},{d <= a.dup_thresh},{recs[i].image},{recs[j].image}\n")
 
-    report = {"format": fmt, "images": len(recs), "groups": n_groups, "largest_groups": sizes[:5], "dup_thresh": a.dup_thresh,
+    write_coverage(out / "coverage_report.md", coverage, cmap, a)
+    report = {"images": len(recs), "per_source": dict(Counter(r.source for r in recs)), "classes": names,
+              "coverage": coverage, "groups": n_groups, "largest_groups": sizes[:5], "dup_thresh": a.dup_thresh,
               "test_near_duplicates_in_train": near,
               "splits": {s: {**v, "instances": dict(v["instances"])} for s, v in stats.items()}}
     (out / "split_report.json").write_text(json.dumps(report, indent=2))
@@ -386,7 +471,8 @@ def main(argv=None):
     for s in SPLITS:
         v = stats[s]
         print(f"  {s:5s} images={v['images']:5d} overlap={v['overlap_images']:5d} "
-              + " ".join(f"{c}={v['instances'].get(c, 0)}" for c in cmap.names))
+              + " ".join(f"{c}={v['instances'].get(c, 0)}" for c in names))
+    print(f"coverage of the full taxonomy: {out / 'coverage_report.md'}")
     return report
 
 

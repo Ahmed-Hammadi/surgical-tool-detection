@@ -1,34 +1,91 @@
-# Canonical class list (order = YOLO class id).
-# Matches the 9 classes of the Mendeley "SURGICAL TOOLS" / SID-RAS dataset.
-names:
-  - forceps
-  - hemostat
-  - scalpel
-  - mayo_scissors
-  - syringe
-  - bandage_scissors
-  - episiotomy_scissors
-  - surgical_gloves
-  - medical_cotton
+# Instrument taxonomy: 43 classes across general, orthopaedic and paediatric surgery sets.
+#
+# This file is the SUPERSET of what the model may learn. prepare_dataset.py trains only the
+# classes that have enough labelled examples (--min-instances) and prints a coverage report
+# for the rest, so the list can run ahead of the data.
+#
+# Per class:
+#   group    coarse family, used by `prepare_dataset.py --granularity coarse` and to report
+#            confusions inside a family separately from confusions across families
+#   depts    which department sets contain it (predict.py --department, app-side filtering)
+#   aliases  other spellings found in public datasets / annotation tools. Matching ignores
+#            case, spaces, hyphens and underscores, so "Needle-Holder" already matches.
+#
+# Classes are defined by SHAPE, not by department or size. A photo carries no scale, so a
+# paediatric and an adult version of the same pattern cannot be separated reliably; the
+# only size-defined class kept is mosquito_forceps, and it is flagged below.
+classes:
+  # ---- basic set (labelled data exists: Mendeley SURGICAL TOOLS) ----
+  forceps:              {group: forceps,   depts: [general, ortho, pediatric],
+                         aliases: [forcep, tissue forceps, dressing forceps, thumb forceps, tweezer, tweezers,
+                                   Anatomische Pinzette Standard, Anatomische Pinzette schlank,
+                                   Chirurgische Pinzette, Splitterpinzette]}
+  hemostat:             {group: clamp,     depts: [general, ortho, pediatric],
+                         aliases: [hemostats, haemostat, haemostats, artery forceps, kelly forceps, kelly clamp,
+                                   crile forceps, straight dissection clamp]}
+  scalpel:              {group: scalpel,   depts: [general, ortho, pediatric],
+                         aliases: [scalpels, blade, scalpel handle, Skalpellgriff Nr.3, Skalpellgriff Nr.4,
+                                   Skalpell geballt, Skalpell schmal]}
+  mayo_scissors:        {group: scissors,  depts: [general, ortho],
+                         aliases: [mayo scissor, straight mayo scissor, curved mayo scissor]}
+  syringe:              {group: other,     depts: [general, ortho, pediatric], aliases: [syringes]}
+  bandage_scissors:     {group: scissors,  depts: [general, ortho, pediatric], aliases: [bandage scissor, lister scissors]}
+  episiotomy_scissors:  {group: scissors,  depts: [general], aliases: [episiotomy scissor]}
+  surgical_gloves:      {group: other,     depts: [general, ortho, pediatric], aliases: [gloves, glove, surgical glove]}
+  medical_cotton:       {group: other,     depts: [general, ortho, pediatric], aliases: [cotton, medical cotton roll, gauze]}
 
-# Raw label spellings -> canonical name. Matching is case-insensitive and
-# ignores spaces, hyphens and underscores, so "Mayo Scissors" == "mayo_scissors".
-# Add entries here if the downloaded annotations use other spellings.
-aliases:
-  forcep: forceps
-  tissueforceps: forceps
-  hemostats: hemostat
-  haemostat: hemostat
-  haemostats: hemostat
-  artery_forceps: hemostat
-  scalpels: scalpel
-  blade: scalpel
-  mayoscissor: mayo_scissors
-  syringes: syringe
-  bandagescissor: bandage_scissors
-  episiotomyscissor: episiotomy_scissors
-  gloves: surgical_gloves
-  glove: surgical_gloves
-  surgicalglove: surgical_gloves
-  cotton: medical_cotton
-  medicalcottonroll: medical_cotton
+  # ---- soft-tissue instruments shared by most trays ----
+  metzenbaum_scissors:  {group: scissors,  depts: [general, pediatric], aliases: [metzenbaum, metzenbaum scissor, Praeparierschere Standard]}
+  iris_scissors:        {group: scissors,  depts: [pediatric], aliases: [iris scissor, fine scissors]}
+  adson_forceps:        {group: forceps,   depts: [general, pediatric], aliases: [adson, adson tissue forceps]}
+  debakey_forceps:      {group: forceps,   depts: [pediatric], aliases: [debakey, de bakey forceps, atraumatic forceps]}
+  mosquito_forceps:     {group: clamp,     depts: [pediatric],     # size-defined: expect confusion with hemostat
+                         aliases: [mosquito, halsted mosquito, mosquito clamp, halsted mosquito forceps]}
+  allis_forceps:        {group: clamp,     depts: [general, pediatric], aliases: [allis, allis tissue forceps, allis clamp]}
+  babcock_forceps:      {group: clamp,     depts: [general, pediatric], aliases: [babcock, babcock tissue forceps]}
+  kocher_forceps:       {group: clamp,     depts: [general, ortho], aliases: [kocher, kocher clamp, ochsner forceps]}
+  needle_holder:        {group: clamp,     depts: [general, ortho, pediatric],
+                         aliases: [needle driver, mayo hegar needle holder, mayo-hegar, needleholder]}
+  towel_clamp:          {group: clamp,     depts: [general, ortho, pediatric], aliases: [backhaus towel clamp, towel clip, backhaus]}
+  sponge_forceps:       {group: clamp,     depts: [general, ortho],
+                         aliases: [sponge holder, sponge holding forceps, rampley sponge holder, foerster sponge forceps]}
+  suction_tip:          {group: other,     depts: [general, ortho, pediatric], aliases: [yankauer, frazier suction, suction tube]}
+  probe:                {group: other,     depts: [pediatric], aliases: [grooved director, probe with eye, Praepariernadel]}
+  skin_hook:            {group: retractor, depts: [pediatric, ortho], aliases: [gillies skin hook, skin hooks]}
+
+  # ---- retractors ----
+  senn_retractor:       {group: retractor, depts: [pediatric, ortho], aliases: [senn, cat paw retractor]}
+  army_navy_retractor:  {group: retractor, depts: [general, ortho], aliases: [army navy, farabeuf, farabeuf retractor, us army retractor]}
+  langenbeck_retractor: {group: retractor, depts: [general, ortho], aliases: [langenbeck]}
+  deaver_retractor:     {group: retractor, depts: [general], aliases: [deaver, dever]}
+  weitlaner_retractor:  {group: retractor, depts: [ortho, pediatric],
+                         aliases: [weitlaner, self retaining retractor, self-retaining, self retractor, gelpi retractor]}
+  hohmann_retractor:    {group: retractor, depts: [ortho], aliases: [hohmann, hohmann bone lever, bone lever]}
+
+  # ---- orthopaedic set ----
+  bone_mallet:          {group: bone,      depts: [ortho], aliases: [mallet, hammer, orthopedic mallet]}
+  osteotome:            {group: bone,      depts: [ortho], aliases: [bone chisel, chisel, gouge, bone gouge]}
+  bone_curette:         {group: bone,      depts: [ortho], aliases: [curette, volkmann curette, bone scoop]}
+  periosteal_elevator:  {group: bone,      depts: [ortho], aliases: [elevator, cobb elevator, periosteal, raspatory]}
+  bone_rongeur:         {group: bone,      depts: [ortho], aliases: [rongeur, bone nibbler, bone-nibbler, luer rongeur]}
+  bone_cutter:          {group: bone,      depts: [ortho], aliases: [bone cutting forceps, liston bone cutter, bone-cutter]}
+  bone_holding_forceps: {group: bone,      depts: [ortho], aliases: [bone holder, bone clamp, verbrugge, lowman bone clamp, reduction forceps]}
+  bone_rasp:            {group: bone,      depts: [ortho], aliases: [bone file, rasp]}
+  bone_hook:            {group: bone,      depts: [ortho], aliases: []}
+  gigli_saw:            {group: bone,      depts: [ortho], aliases: [gigli, wire saw, bone saw]}
+  depth_gauge:          {group: bone,      depts: [ortho], aliases: [screw depth gauge]}
+  screwdriver:          {group: bone,      depts: [ortho], aliases: [hex screwdriver, orthopedic screwdriver]}
+  wire_cutter:          {group: bone,      depts: [ortho], aliases: [pin cutter, k-wire cutter]}
+  pliers:               {group: bone,      depts: [ortho], aliases: [flat nose pliers, needle nose pliers]}
+
+# Labels to drop silently: the box is removed and the image is kept. Only for things that
+# are not instruments (so leaving them unlabelled teaches the model nothing wrong).
+ignore:
+  - hand
+  - tray
+
+# Instrument labels with no matching class. Images containing them are left out entirely:
+# keeping the image without the box would teach the model that the instrument is background.
+exclude_images_with:
+  - Chirurgische Schere spitz/spitz     # generic operating scissors
+  - Chirurgische Schere spitz/stumpf

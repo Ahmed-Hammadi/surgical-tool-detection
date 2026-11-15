@@ -5,3 +5,5 @@ pillow
 pyyaml
 scikit-learn
 pytest
+# Optional, for src/prelabel.py with the text-prompted YOLOE detector:
+#   pip install git+https://github.com/ultralytics/CLIP.git

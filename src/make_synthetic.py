@@ -1,7 +1,7 @@
 """Generate a small synthetic stand-in for the surgical-tools dataset.
 
 Only for smoke-testing the pipeline end to end; it is NOT a substitute for the
-real data. Renders crude silhouettes of the 9 classes on tray-like backgrounds,
+real data. Renders crude silhouettes of the 9 basic-set classes on tray-like backgrounds,
 some scenes cluttered with overlapping tools, plus augmented copies of some
 photos (blur / lighting / red "blood" spots / flips) to exercise the
 leakage-safe grouping in prepare_dataset.py.
@@ -24,6 +24,9 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import ClassMap  # noqa: E402
 
+# classes draw_tool() knows how to render (the original 9-class basic set)
+DRAWABLE = {"forceps", "hemostat", "scalpel", "mayo_scissors", "syringe", "bandage_scissors",
+            "episiotomy_scissors", "surgical_gloves", "medical_cotton"}
 STEEL = (180, 185, 192, 255)
 DARK = (110, 115, 122, 255)
 
@@ -208,7 +211,7 @@ def main(argv=None):
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args(argv)
     rng = random.Random(a.seed)
-    names = ClassMap().names
+    names = [c for c in ClassMap().names if c in DRAWABLE]
     items, copies = [], []
     for i in range(a.n):
         im, boxes = scene(rng, names, a.size, rng.random() < a.clutter)

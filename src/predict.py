@@ -4,11 +4,13 @@ Usage:
     python src/predict.py --weights best.pt --source tray.jpg
     python src/predict.py --weights best.pt --source data/new_trays/ --save-json counts.json
     python src/predict.py --weights best.pt --source 0          # webcam
+    python src/predict.py --weights best.pt --source tray.jpg --department ortho
 """
 from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -24,6 +26,8 @@ def main(argv=None):
     ap.add_argument("--imgsz", type=int, default=None)
     ap.add_argument("--device", default=None)
     ap.add_argument("--save-json", type=Path, default=None)
+    ap.add_argument("--department", choices=["general", "ortho", "pediatric"], default=None,
+                    help="only report instruments that belong to this department's set")
     ap.add_argument("--no-save", action="store_true", help="don't write annotated images")
     a = ap.parse_args(argv)
 
@@ -32,8 +36,17 @@ def main(argv=None):
     model = RTDETR(a.weights) if "rtdetr" in a.weights.lower() else YOLO(a.weights)
     imgsz = a.imgsz or (model.ckpt or {}).get("train_args", {}).get("imgsz", 640)
     src = int(a.source) if a.source.isdigit() else a.source
+    keep = None  # class ids to report
+    if a.department:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from common import ClassMap
+
+        wanted = set(ClassMap().department(a.department))
+        keep = [i for i, n in model.names.items() if n in wanted]
+        if not keep:
+            sys.exit(f"this model has no classes from the {a.department} set: {list(model.names.values())}")
     out = []
-    for r in model.predict(src, conf=a.conf, iou=a.iou, imgsz=imgsz, device=a.device,
+    for r in model.predict(src, conf=a.conf, iou=a.iou, imgsz=imgsz, device=a.device, classes=keep,
                            save=not a.no_save, project=str(ROOT / "runs"), name="predict",
                            stream=True, verbose=False):
         names = r.names

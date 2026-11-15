@@ -18,22 +18,37 @@ def norm_key(name: str) -> str:
 
 
 class ClassMap:
-    """Maps raw annotation label strings onto the canonical class list."""
+    """The instrument taxonomy: canonical classes, their groups/departments, and label aliases."""
+
+    IGNORE, EXCLUDE = "__ignore__", "__exclude_image__"
 
     def __init__(self, cfg_path: Path = ROOT / "configs" / "classes.yaml"):
         cfg = yaml.safe_load(Path(cfg_path).read_text())
-        self.names: list[str] = cfg["names"]
-        self._lookup = {norm_key(n): n for n in self.names}
-        for raw, canon in (cfg.get("aliases") or {}).items():
-            if canon not in self.names:
-                raise ValueError(f"alias {raw!r} -> unknown class {canon!r}")
-            self._lookup[norm_key(raw)] = canon
+        classes = cfg["classes"]
+        self.names: list[str] = list(classes)
+        self.group = {n: c.get("group", "other") for n, c in classes.items()}
+        self.depts = {n: list(c.get("depts", [])) for n, c in classes.items()}
+        self._lookup = {}
+        for n, c in classes.items():
+            for raw in [n, *(c.get("aliases") or [])]:
+                self._add(raw, n)
+        for raw in cfg.get("ignore") or []:
+            self._add(raw, self.IGNORE)
+        for raw in cfg.get("exclude_images_with") or []:
+            self._add(raw, self.EXCLUDE)
+
+    def _add(self, raw: str, target: str):
+        key = norm_key(raw)
+        if self._lookup.get(key, target) != target:
+            raise ValueError(f"label {raw!r} maps to both {self._lookup[key]!r} and {target!r}")
+        self._lookup[key] = target
 
     def canonical(self, raw: str) -> str | None:
+        """Canonical class, ClassMap.IGNORE / ClassMap.EXCLUDE, or None if the label is unknown."""
         return self._lookup.get(norm_key(raw))
 
-    def index(self, canonical: str) -> int:
-        return self.names.index(canonical)
+    def department(self, dept: str) -> list[str]:
+        return [n for n in self.names if dept in self.depts[n]]
 
 
 def overlap_ratio(a, b) -> float:

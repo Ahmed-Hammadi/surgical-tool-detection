@@ -25,6 +25,7 @@ import argparse
 import json
 import shutil
 import statistics
+import sys
 import traceback
 from pathlib import Path
 
@@ -80,7 +81,12 @@ def main(argv=None):
     work.mkdir(parents=True, exist_ok=True)
     bundle.mkdir(parents=True, exist_ok=True)
     report_path = work / "export_report.json"
+    # results accumulate across calls (e.g. the Core ML env adds its rows later), but only
+    # for the same weights file: a retrained model under the same run name starts afresh
+    stamp = f"{a.weights.stat().st_size}:{a.weights.stat().st_mtime_ns}"
     results = json.loads(report_path.read_text()) if report_path.exists() else {}
+    if results.pop("_weights", None) != stamp:
+        results = {}
 
     if not a.no_eval and "pytorch" not in results:
         results["pytorch"] = {"file": a.weights.name, "size_mb": size_mb(a.weights), "platform": "reference",
@@ -119,7 +125,7 @@ def main(argv=None):
             res["note"] = "evaluate on a Mac/iPhone (Core ML does not run on Linux)"
         results[t] = res
 
-    report_path.write_text(json.dumps(results, indent=2))
+    report_path.write_text(json.dumps({"_weights": stamp, **results}, indent=2))
     names = pt.names
     io = {}  # actual tensor layouts, read back from an exported LiteRT file
     for f in sorted(bundle.glob("*.tflite")):
@@ -135,8 +141,16 @@ def main(argv=None):
             pass
         break
     (bundle / "labels.txt").write_text("\n".join(names[i] for i in range(len(names))) + "\n")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from common import ClassMap
+
+    cmap = ClassMap()
+    # class ids per department set, so the app can show only the tray type the user picked
+    departments = {d: [i for i in range(len(names)) if names[i] in cmap.department(d)]
+                   for d in sorted({d for v in cmap.depts.values() for d in v})}
     (bundle / "model_card.json").write_text(json.dumps({
-        "task": "detect", "classes": [names[i] for i in range(len(names))], "input_size": imgsz,
+        "task": "detect", "classes": [names[i] for i in range(len(names))],
+        "departments": departments, "input_size": imgsz,
         "input": f"RGB, {imgsz}x{imgsz}, letterboxed (aspect kept, padded with 114 grey), float values 0-1",
         **io,
         "output_litert_onnx": f"[1, 4 + {len(names)}, N] = cx, cy, w, h (pixels of the input) + class scores; "

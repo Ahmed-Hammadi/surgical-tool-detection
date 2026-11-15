@@ -16,10 +16,17 @@ from common import ClassMap, has_overlap, overlap_ratio  # noqa: E402
 
 def test_classmap_aliases():
     cm = ClassMap()
+    assert len(cm.names) >= 30 and len(set(cm.names)) == len(cm.names)
     assert cm.canonical("Mayo Scissors") == "mayo_scissors"
     assert cm.canonical("haemostats") == "hemostat"
     assert cm.canonical("Surgical-Gloves") == "surgical_gloves"
+    assert cm.canonical("Needle-Holder") == "needle_holder"
+    assert cm.canonical("Bone-Nibbler") == "bone_rongeur"
+    assert cm.canonical("hand") == cm.IGNORE
     assert cm.canonical("stethoscope") is None
+    for d in ("general", "ortho", "pediatric"):
+        assert len(cm.department(d)) >= 15
+    assert "bone_mallet" in cm.department("ortho") and "bone_mallet" not in cm.department("pediatric")
 
 
 def test_overlap_ratio():
@@ -91,10 +98,66 @@ def test_unknown_label_is_rejected(tmp_path):
     raw = tmp_path / "raw"
     make_synthetic.main(["--out", str(raw), "--n", "3", "--size", "128", "--format", "voc"])
     xml = next((raw / "images").glob("*.xml"))
-    xml.write_text(re.sub(r"<name>[^<]*</name>", "<name>Retractor</name>", xml.read_text(), count=1))
-    with pytest.raises(SystemExit, match="Unknown labels"):
-        prepare_dataset.main(["--raw", str(raw), "--out", str(tmp_path / "out")])
-    prepare_dataset.main(["--raw", str(raw), "--out", str(tmp_path / "out"), "--drop-unknown"])
+    xml.write_text(re.sub(r"<name>[^<]*</name>", "<name>Stethoscope</name>", xml.read_text(), count=1))
+    args = ["--raw", str(raw), "--out", str(tmp_path / "out"), "--min-instances", "1"]
+    with pytest.raises(SystemExit, match="Labels not in"):
+        prepare_dataset.main(args)
+    rep = prepare_dataset.main([*args, "--unknown", "drop-image"])
+    assert rep["images"] < len(list((raw / "images").glob("*.jpg")))
+
+
+def _voc(folder, name, boxes, color):
+    """A tiny VOC-annotated image; each box is drawn so the photos differ."""
+    from PIL import Image, ImageDraw
+
+    folder.mkdir(parents=True, exist_ok=True)
+    im = Image.new("RGB", (200, 200), color)
+    d = ImageDraw.Draw(im)
+    objs = ""
+    for label, (x1, y1, x2, y2) in boxes:
+        d.rectangle([x1, y1, x2, y2], fill=(200, 200, 210))
+        objs += (f"<object><name>{label}</name><bndbox><xmin>{x1}</xmin><ymin>{y1}</ymin>"
+                 f"<xmax>{x2}</xmax><ymax>{y2}</ymax></bndbox></object>")
+    im.save(folder / f"{name}.png")
+    (folder / f"{name}.xml").write_text(
+        f"<annotation><filename>{name}.png</filename><size><width>200</width><height>200</height></size>{objs}</annotation>")
+
+
+def test_merge_sources_prunes_and_reports(tmp_path):
+    """Two source datasets with different label spellings; rare, ignored and unclassed labels."""
+    import random
+
+    rng = random.Random(0)
+
+    def box():
+        x, y = rng.randint(0, 130), rng.randint(0, 130)
+        return x, y, x + rng.randint(20, 60), y + rng.randint(20, 60)
+
+    def color():
+        return tuple(rng.randint(0, 255) for _ in range(3))
+
+    raw = tmp_path / "raw"
+    for i in range(30):
+        _voc(raw / "ortho_set", f"o{i}", [("Bone Mallet", box()), ("Bone-Nibbler", box()), ("hand", box())], color())
+        _voc(raw / "basic_set", f"b{i}", [("Needle-Holder", box()), ("Scalpels", box())], color())
+    _voc(raw / "basic_set", "rare", [("Scalpels", box()), ("deaver", box())], color())  # only 1 deaver box
+    _voc(raw / "basic_set", "noclass", [("Scalpels", box()), ("Chirurgische Schere spitz/spitz", box())], color())
+
+    out = tmp_path / "out"
+    args = ["--raw", str(raw), "--out", str(out), "--min-instances", "10", "--dup-thresh", "-1"]
+    rep = prepare_dataset.main(args)
+    assert rep["classes"] == ["scalpel", "needle_holder", "bone_mallet", "bone_rongeur"]  # taxonomy order
+    assert rep["per_source"] == {"basic_set": 30, "ortho_set": 30}  # `rare` and `noclass` images left out
+    status = {c["class"]: c["status"] for c in rep["coverage"]}
+    assert status["deaver_retractor"] == "too few" and status["hohmann_retractor"] == "no data"
+    d = yaml.safe_load((out / "data.yaml").read_text())
+    assert d["names"] == dict(enumerate(rep["classes"]))
+    ids = {int(line.split()[0]) for f in (out / "labels").rglob("*.txt") for line in f.read_text().splitlines()}
+    assert ids == {0, 1, 2, 3}  # no box was written for `hand`
+    assert "| ortho |" in (out / "coverage_report.md").read_text()
+
+    coarse = prepare_dataset.main([*args, "--granularity", "coarse"])
+    assert coarse["classes"] == ["clamp", "scalpel", "bone"]
 
 
 @pytest.mark.parametrize("frame", ["upright", "raw"])
@@ -122,7 +185,7 @@ def test_exif_rotated_photo_labels_stay_on_object(tmp_path, frame):
         f"<ymax>{box[3]}</ymax></bndbox></object></annotation>")
 
     out = tmp_path / "out"
-    prepare_dataset.main(["--raw", str(raw), "--out", str(out), "--split", "0", "0", "1"])
+    prepare_dataset.main(["--raw", str(raw), "--out", str(out), "--split", "0", "0", "1", "--min-instances", "1"])
     img = next((out / "images" / "test").iterdir())
     written = np.asarray(Image.open(img).convert("RGB")).astype(int)  # what YOLO loaders will see
     H, W = written.shape[:2]
