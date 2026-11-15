@@ -103,6 +103,10 @@ The drafts are a starting point. Open the dataset in a YOLO label editor (CVAT, 
 Roboflow, labelImg), delete wrong boxes, tighten loose ones and draw the missing ones. Mixed
 trays must be labelled completely: every instrument in the photo, every time.
 
+On Kaggle, upload the capture folder as a private Kaggle Dataset, run `prelabel.py` in a
+notebook with `--capture /kaggle/input/<your-dataset>`, and download the drafts to correct.
+Upload the corrected dataset again as an input for training.
+
 Then merge and retrain:
 
 ```bash

@@ -37,7 +37,7 @@ pip install -r requirements.txt
 pip install -r requirements-export.txt   # for src/export.py (phone formats)
 ```
 
-Training needs a GPU to finish in reasonable time. A CPU works for the smoke test and for inference.
+Training needs a GPU. The project is trained on Kaggle: see "Training on Kaggle" below and `notebooks/kaggle_train.ipynb`. A CPU works for the smoke test and for inference.
 
 ## 1. Get the data
 
@@ -103,20 +103,25 @@ Default choices:
 - `degrees=180` and `flipud`: tools lie on a tray at any angle.
 - `mosaic`, `copy_paste=0.3` and `mixup`: these create cluttered trays with overlapping tools.
 
-### Training on a free GPU (Google Colab / Kaggle)
+### Training on Kaggle
 
-```bash
-git clone <your repo> && cd surgical-tool-detection
-pip install -r requirements.txt
-pip install -r requirements-export.txt   # for src/export.py (phone formats)
-# upload/extract the Mendeley zip into data/raw/, then:
-python src/prepare_dataset.py
-python src/train.py --set batch=-1      # batch=-1 auto-fits GPU memory
-```
+Open `notebooks/kaggle_train.ipynb` in Kaggle (**File → Import Notebook**, or link the GitHub
+repo), then:
 
-YOLO11n at 640 px for 200 epochs on ~4,200 training images takes about 2–3 hours on a T4.
-You can resume an
-interrupted run with `yolo train resume model=runs/<name>/weights/last.pt`.
+1. **Settings → Accelerator → GPU T4 x2**, and **Internet → On**.
+2. **Add Input**: add each dataset. They appear read-only under `/kaggle/input/<name>/`.
+   The Mendeley set is on Kaggle as `jocelyndumlao/surgical-tools`.
+3. Run the cells: clone, install, prepare, train, evaluate, export, pack `results.zip`.
+
+Notes:
+
+- For a full run use **Save Version → Save & Run All (Commit)**; it keeps running after you
+  close the tab. A session lasts at most 12 hours, and Kaggle gives about 30 GPU hours a week.
+- Only `/kaggle/working/` is kept. The notebook writes everything there.
+- A dataset that isn't on Kaggle (for example HOSPI-Tools from Zenodo) can be downloaded in
+  the notebook with `wget` while Internet is on, or uploaded once as a private Kaggle Dataset.
+- To resume a cut-off run, add the earlier version's output as an input and run
+  `yolo train resume model=<path>/last.pt`.
 
 ## 4. Evaluate
 
