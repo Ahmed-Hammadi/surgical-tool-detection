@@ -92,7 +92,10 @@ For class folders the detector only has to find where the instruments are; the c
 from the folder name, so this works for instruments no model has seen. It writes a YOLO
 dataset to `data/raw/my_hospital/`, review pictures with the boxes drawn, and a list of
 photos where it found nothing. The default detector is YOLOE, prompted with the text
-"surgical instrument"; it needs `pip install git+https://github.com/ultralytics/CLIP.git`.
+"surgical instrument"; it needs `pip install git+https://github.com/ultralytics/CLIP.git` and
+downloads a text model of about 600 MB on first use. It has only been run on synthetic
+drawings so far, where it found nothing, so check its drafts on your first real photos
+before relying on it.
 Once you have a trained model, pass `--weights runs/<name>/weights/best.pt` instead, and use
 that for the `_mixed` folder as well.
 
